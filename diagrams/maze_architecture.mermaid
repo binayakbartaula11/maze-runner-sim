@@ -1,0 +1,102 @@
+graph TD
+    %% Layer 1: User Interface
+    UI[User Interface]
+    
+    %% Layer 2: UI Components
+    Controls[Control Panel]
+    Canvas[Main Canvas]
+    Status[Status Display]
+    
+    %% Layer 3: Event Handling
+    EH[Event Handler]
+    
+    %% Layer 4: Core Controller
+    MS[MazeSimulation Controller]
+    
+    %% Layer 5: State Management
+    SM[State Manager]
+    PM[Performance Monitor]
+    
+    %% Layer 6: Algorithm Utilities
+    GenUtils[Generation Utilities]
+    SolveUtils[Pathfinding Utilities]
+    
+    %% Layer 7: Generation Algorithms
+    RB[Recursive Backtracking]
+    PA[Prim's Algorithm]
+    KA[Kruskal's Algorithm]
+    
+    %% Layer 8: Pathfinding Algorithms
+    DFS[Depth-First Search]
+    BFS[Breadth-First Search]
+    AStar[A* Algorithm]
+    
+    %% Layer 9: Data Storage
+    Grid[Maze Grid 2D Array]
+    
+    %% Layer 10: Data Backup & State
+    GridBackup[Original Grid Backup]
+    AlgState[Algorithm State Data]
+    
+    %% Layer 11: Rendering Components
+    ColorMap[Color Mapping]
+    
+    %% Layer 12: Renderers
+    Renderer[Grid Renderer]
+    UIRenderer[UI Renderer]
+    
+    %% Vertical Flow Connections
+    UI --> Controls
+    UI --> Canvas
+    UI --> Status
+    
+    UI --> EH
+    EH --> MS
+    
+    MS --> SM
+    MS --> PM
+    
+    MS --> GenUtils
+    MS --> SolveUtils
+    
+    GenUtils --> RB
+    GenUtils --> PA
+    GenUtils --> KA
+    
+    SolveUtils --> DFS
+    SolveUtils --> BFS
+    SolveUtils --> AStar
+    
+    RB --> Grid
+    PA --> Grid
+    KA --> Grid
+    DFS --> Grid
+    BFS --> Grid
+    AStar --> Grid
+    
+    Grid --> GridBackup
+    Grid --> AlgState
+    
+    Grid --> ColorMap
+    SM --> ColorMap
+    PM --> ColorMap
+    
+    ColorMap --> Renderer
+    ColorMap --> UIRenderer
+    
+    Renderer --> Canvas
+    UIRenderer --> Status
+    UIRenderer --> Controls
+    
+    %% Styling
+    classDef userLayer fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef coreLayer fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef algoLayer fill:#fff8e1,stroke:#f57f17,stroke-width:2px
+    classDef dataLayer fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef renderLayer fill:#f1f8e9,stroke:#689f38,stroke-width:2px
+    
+    class UI,Controls,Canvas,Status userLayer
+    class EH,MS,SM,PM coreLayer
+    class GenUtils,SolveUtils,RB,PA,KA,DFS,BFS,AStar algoLayer
+    class Grid,GridBackup,AlgState dataLayer
+    class ColorMap,Renderer,UIRenderer renderLayer
