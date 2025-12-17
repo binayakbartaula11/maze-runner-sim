@@ -1,12 +1,12 @@
-import pygame
-import random
-import heapq
-import time
-from enum import Enum
-from typing import List, Tuple, Set, Optional
-from performance_analyzer import PerformanceAnalyzer
+import pygame  # Core library for the graphics, event handling, and game loop
+import random  # Used for randomized maze generation algorithms and decision making
+import heapq  # Provides priority queue implementation for A* algorithm efficiency
+import time  # Used for timing operations and performance tracking
+from enum import Enum  # Base class for defining state enumerations
+from typing import List, Tuple, Set, Optional  # Type hinting for better code maintenance and clarity
+from performance_analyzer import PerformanceAnalyzer  # Custom module for tracking algorithm metrics
 
-# Initialize Pygame
+# Initialize Pygame core modules to enable window creation and event processing
 pygame.init()
 
 # --- UI Constants ---
@@ -47,6 +47,18 @@ DARK_GREEN = (0, 100, 0)
 PURPLE: Tuple[int, int, int] = (128, 0, 128)
 
 class CellType(Enum):
+    """
+    Defines the specific state or role of a single grid cell.
+    
+    Attributes:
+        WALL: Represents an obstacle or boundary.
+        PATH: A traversable open space.
+        START: The user-defined (or default) starting point.
+        END: The target destination point.
+        VISITED: Marks cells explored during the solving process (visualized).
+        SOLUTION: Marks the cells that form the final optimal path.
+        CURRENT: Highlights the algorithm's current working cell for visualization.
+    """
     WALL = 0
     PATH = 1
     START = 2
@@ -56,65 +68,116 @@ class CellType(Enum):
     CURRENT = 6
 
 class GenerationAlgorithm(Enum):
+    """
+    Available maze generation algorithms.
+    
+    Attributes:
+        RECURSIVE_BACKTRACKING: DFS-based, creates long corridors with high branching factor.
+        PRIMS: Minimum spanning tree-based, creates a uniform distribution of short paths.
+        KRUSKALS: Set-based (Union-Find), creates complex mazes with many dead ends.
+    """
     RECURSIVE_BACKTRACKING = "Recursive Backtracking"
     PRIMS = "Prim's Algorithm"
     KRUSKALS = "Kruskal's Algorithm"
 
 class SolvingAlgorithm(Enum):
+    """
+    Available pathfinding algorithms for solving the maze.
+    
+    Attributes:
+        DFS: Depth-First Search; non-optimal, explores deep paths first.
+        ASTAR: A* Search; optimal (if heuristic is admissible), uses heuristics for directed search.
+        BFS: Breadth-First Search; guarantees shortest path in unweighted graphs.
+    """
     DFS = "Depth-First Search"
     ASTAR = "A* Algorithm"
     BFS = "Breadth-First Search"
 
 class MazeSimulation:
-    """Maze generation and solving simulation with modern UI."""
+    """
+    Main controller class for the Maze Generation and Solving Simulation.
+    
+    This class manages the Pygame window, handling the simulation loop,
+    rendering the grid and UI, and coordinating the execution of generation
+    and solving algorithms. It maintains the global state of the simulation.
+    """
     def __init__(self) -> None:
-        """Initialize the simulation, UI, and maze grid."""
+        """
+        Initialize the simulation environment, UI components, and state.
+        
+        Sets up the Pygame display with resizable capabilities, initializes fonts,
+        defines the grid dimensions based on window size, and resets all algorithm
+        states to their defaults.
+        """
+        # --- Display Setup ---
         self.screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT), pygame.RESIZABLE)
         pygame.display.set_caption("Maze Generation and Solving Simulation")
-        self.clock = pygame.time.Clock()
+        self.clock = pygame.time.Clock()  # Controls the framerate
+        
+        # --- UI Dimensions & Layout ---
         self.sidebar_width = SIDEBAR_WIDTH
         self.window_width = WINDOW_WIDTH
         self.window_height = WINDOW_HEIGHT
         self.cell_size = CELL_SIZE
         self.grid_size = GRID_SIZE
         self.grid_rows = GRID_ROWS
-        # Fonts
+        
+        # --- Typography ---
+        # Fonts are initialized with dynamic sizing in mind (re-initialized on resize)
         self.font_title = pygame.font.SysFont("Arial", 28, bold=True)
         self.font_subtitle = pygame.font.SysFont("Arial", 20, bold=True)
         self.font_body = pygame.font.SysFont("Arial", 16)
         self.font_icon = pygame.font.SysFont("Arial", 22, bold=True)
-        # Maze grid
+        
+        # --- Grid Initialization ---
+        # The grid is a 2D list of CellType enums representing the maze structure.
         self.grid: List[List[CellType]] = [[CellType.WALL for _ in range(self.grid_size)] for _ in range(self.grid_rows)]
-        self.original_grid: Optional[List[List[CellType]]] = None
-        # Algorithm settings
+        self.original_grid: Optional[List[List[CellType]]] = None  # Stores the clean maze before solving
+        
+        # --- Algorithm Configuration ---
         self.generation_algorithm: GenerationAlgorithm = GenerationAlgorithm.RECURSIVE_BACKTRACKING
         self.solving_algorithm: SolvingAlgorithm = SolvingAlgorithm.ASTAR
-        # Simulation state
-        self.is_generating: bool = False
-        self.is_solving: bool = False
-        self.generation_complete: bool = False
-        self.solving_complete: bool = False
-        self.generation_stack: List[Tuple[int, int]] = []
-        self.solving_stack: List[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = []
-        self.visited_cells: Set[Tuple[int, int]] = set()
-        self.solution_path: List[Tuple[int, int]] = []
-        self.current_cell: Optional[Tuple[int, int]] = None
-        # Statistics
+        
+        # --- Simulation Flags & State ---
+        self.is_generating: bool = False  # True if generation is currently running
+        self.is_solving: bool = False     # True if solving is currently running
+        self.generation_complete: bool = False  # Flag to allow solving only after generation
+        self.solving_complete: bool = False     # Flag to show results/metrics
+        self.is_paused: bool = False            # User pause toggle state
+        
+        # --- Algorithm Data Structures ---
+        # These structures maintain state across frames for the iterative animation steps.
+        self.generation_stack: List[Tuple[int, int]] = []  # Stack for DFS-based generation (Backtracking)
+        self.solving_stack: List[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = [] # Stack/Queue for solvers
+        self.visited_cells: Set[Tuple[int, int]] = set() # Optimized lookup for visited checks
+        self.solution_path: List[Tuple[int, int]] = []   # Stores the sequence of coordinates for the solution
+        self.current_cell: Optional[Tuple[int, int]] = None # The cell currently being processed (visual focus)
+        
+        # --- Metric Tracking ---
         self.generation_steps: int = 0
         self.solving_steps: int = 0
         self.start_time: float = 0.0
-        # Start and end positions
+        
+        # --- Default Positions ---
+        # Start top-left (offset by 1 due to wall border), End bottom-right
         self.start_pos: Tuple[int, int] = (1, 1)
         self.end_pos: Tuple[int, int] = (self.grid_rows - 2, self.grid_size - 2)
         
-        # Performance Analysis
+        # --- Performance Analytics ---
+        # The PerformanceAnalyzer handles precise timing and memory profiling
         self.analyzer = PerformanceAnalyzer()
         self.last_metrics = {}
         
+        # Trigger initial reset
         self.initialize_maze()
 
     def initialize_maze(self) -> None:
-        """Reset the maze grid and simulation state."""
+        """
+        Reset the maze grid and simulation state to a clean slate.
+        
+        This clears the grid, resets the Start/End positions, and zeroes out
+        all counters and algorithm collections (stacks, sets, queues).
+        """
         self.grid = [[CellType.WALL for _ in range(self.grid_size)] for _ in range(self.grid_rows)]
         self.grid[self.start_pos[0]][self.start_pos[1]] = CellType.START
         self.grid[self.end_pos[0]][self.end_pos[1]] = CellType.END
@@ -131,7 +194,17 @@ class MazeSimulation:
         self.solving_steps = 0
     
     def get_neighbors(self, row: int, col: int, include_diagonals: bool = False) -> List[Tuple[int, int]]:
-        """Get valid neighboring cells"""
+        """
+        Get valid neighboring cells within the grid boundaries.
+        
+        Args:
+            row: Current row index.
+            col: Current column index.
+            include_diagonals: If True, includes diagonal neighbors (8-way); otherwise cardinal only (4-way).
+            
+        Returns:
+            List of (row, col) tuples for valid neighbors.
+        """
         neighbors = []
         directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # Right, Down, Left, Up
         
@@ -146,12 +219,25 @@ class MazeSimulation:
         return neighbors
     
     def get_unvisited_neighbors(self, row: int, col: int) -> List[Tuple[int, int]]:
-        """Get unvisited neighboring cells for maze generation"""
+        """
+        Get unvisited neighbors specifically for Maze Generation (step size 2).
+        
+        In maze generation, we often jump 2 cells to leave room for a wall in betweeen.
+        This method checks cells 2 steps away that are still walls (unvisited).
+        
+        Args:
+            row: Current row index.
+            col: Current column index.
+            
+        Returns:
+            List of (row, col) tuples for 2-step-away unvisited neighbors.
+        """
         neighbors = []
         directions = [(0, 2), (2, 0), (0, -2), (-2, 0)]  # Right, Down, Left, Up
         
         for dr, dc in directions:
             new_row, new_col = row + dr, col + dc
+            # Ensure we stay within bounds (padding of 1 cell from edge usually kept for walls)
             if (0 < new_row < self.grid_rows - 1 and 0 < new_col < self.grid_size - 1 and 
                 self.grid[new_row][new_col] == CellType.WALL):
                 neighbors.append((new_row, new_col))
@@ -159,9 +245,21 @@ class MazeSimulation:
         return neighbors
     
     def get_path_neighbors(self, row: int, col: int) -> List[Tuple[int, int]]:
-        """Get accessible neighboring cells for maze solving"""
+        """
+        Get accessible neighbors for Maze Solving (traversable paths).
+        
+        Used by solving algorithms (DFS, BFS, A*) to find valid next steps.
+        Checks for PATH, START, or END cell types.
+        
+        Args:
+            row: Current row index.
+            col: Current column index.
+            
+        Returns:
+            List of (row, col) tuples for traversable neighbors.
+        """
         neighbors = []
-        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # Right, Down, Left, Up
+        directions = [(0, 1), (1, 0), (0, -1), (-1, 0)]  # Cardinal directions only
         
         for dr, dc in directions:
             new_row, new_col = row + dr, col + dc
@@ -172,21 +270,35 @@ class MazeSimulation:
         return neighbors
     
     def remove_wall_between(self, cell1: Tuple[int, int], cell2: Tuple[int, int]):
-        """Remove wall between two cells during maze generation"""
+        """
+        Carve a path between two non-adjacent cells by removing the wall in between.
+        
+        Used during generation when connecting a cell at (r, c) to (r+2, c) or similar.
+        The wall is located at the midpoint.
+        
+        Args:
+            cell1: (row, col) of the first cell.
+            cell2: (row, col) of the second cell.
+        """
         row1, col1 = cell1
         row2, col2 = cell2
         
-        # Calculate the wall position between the two cells
+        # Calculate the wall position (midpoint) between the two cells
         wall_row = (row1 + row2) // 2
         wall_col = (col1 + col2) // 2
         
-        # Remove the wall
+        # Turn the wall into a path
         if (0 < wall_row < self.grid_rows - 1 and 0 < wall_col < self.grid_size - 1):
             self.grid[wall_row][wall_col] = CellType.PATH
     
     def start_generation(self):
-        """Start the maze generation process"""
-        self.initialize_maze()
+        """
+        Begin the maze generation process based on the selected algorithm.
+        
+        This sets the flags to start the animation loop, resets metadata,
+        and initializes the specific data structures needed for the chosen algorithm.
+        """
+        self.initialize_maze()  # Ensure clean slate
         self.is_generating = True
         self.generation_complete = False
         self.generation_steps = 0
@@ -200,8 +312,19 @@ class MazeSimulation:
             self.start_kruskals_algorithm()
     
     def start_recursive_backtracking(self):
-        """Initialize recursive backtracking algorithm"""
-        # Start from a random cell (must be odd coordinates)
+        """
+        Initialize the Recursive Backtracking algorithm.
+        
+        Algorithm Overview:
+        1. Choose a random starting cell.
+        2. Push it to a stack.
+        3. While the stack is not empty:
+           a. Peek at the top cell.
+           b. If it has unvisited neighbors, choose one randomly, remove the wall,
+              push the neighbor to stack.
+           c. If no unvisited neighbors, pop from stack (backtrack).
+        """
+        # Start from a random odd-coordinate cell to ensure valid grid alignment
         start_row = random.choice(range(1, self.grid_rows - 1, 2))
         start_col = random.choice(range(1, self.grid_size - 1, 2))
         
@@ -210,7 +333,12 @@ class MazeSimulation:
         self.current_cell = (start_row, start_col)
     
     def step_recursive_backtracking(self):
-        """Execute one step of recursive backtracking"""
+        """
+        Execute a single step of the Recursive Backtracking algorithm (for animation).
+        
+        This method processes the top element of the stack. If the stack is empty,
+        generation is marked as complete.
+        """
         if not self.generation_stack:
             self.finish_generation()
             return
@@ -218,31 +346,44 @@ class MazeSimulation:
         current_row, current_col = self.generation_stack[-1]
         self.current_cell = (current_row, current_col)
         
-        # Get unvisited neighbors
+        # Get unvisited neighbors (2 cells away)
         neighbors = self.get_unvisited_neighbors(current_row, current_col)
         
         if neighbors:
-            # Choose a random neighbor
+            # Choose a random neighbor to visit next
             next_row, next_col = random.choice(neighbors)
             
             # Mark the neighbor as part of the path
             self.grid[next_row][next_col] = CellType.PATH
             
-            # Remove wall between current and neighbor
+            # Remove the wall between the current cell and the chosen neighbor
             self.remove_wall_between((current_row, current_col), (next_row, next_col))
             
-            # Add to stack
+            # push to stack to continue path from there
             self.generation_stack.append((next_row, next_col))
         else:
-            # Backtrack
+            # Dead end reached, backtrack to previous cell
             self.generation_stack.pop()
         
         self.generation_steps += 1
         self.analyzer.increment_steps()
     
     def start_prims_algorithm(self):
-        """Initialize Prim's algorithm"""
-        # Start from a random cell
+        """
+        Initialize Randomized Prim's Algorithm.
+        
+        Algorithm Overview:
+        1. Start with a grid of walls.
+        2. Pick a random cell, mark it as part of the maze.
+        3. Add the walls of the cell to a wall list (frontier).
+        4. While the wall list is not empty:
+           a. Pick a random wall from the list.
+           b. If only one of the two cells that the wall divides is visited:
+              i. Make the wall a path and mark the unvisited cell as part of the maze.
+              ii. Add the neighboring walls of the cell to the wall list.
+           c. Remove the wall from the list.
+        """
+        # Start from a random odd-coordinate cell
         start_row = random.choice(range(1, self.grid_rows - 1, 2))
         start_col = random.choice(range(1, self.grid_size - 1, 2))
         
@@ -252,50 +393,70 @@ class MazeSimulation:
         self.current_cell = (start_row, start_col)
     
     def update_frontier(self, row: int, col: int):
-        """Update frontier walls for Prim's algorithm"""
+        """
+        Add valid walls around the current cell to the frontier set.
+        
+        Args:
+            row: Row of the newly added path cell.
+            col: Col of the newly added path cell.
+        """
         for dr, dc in [(0, 2), (2, 0), (0, -2), (-2, 0)]:
             new_row, new_col = row + dr, col + dc
             if (0 < new_row < self.grid_rows - 1 and 0 < new_col < self.grid_size - 1 and 
                 self.grid[new_row][new_col] == CellType.WALL):
-                # Add the wall between current cell and neighbor
+                # Calculate the wall position between current cell and neighbor
                 wall_row = (row + new_row) // 2
                 wall_col = (col + new_col) // 2
+                # Store (wall_row, wall_col, neighbor_row, neighbor_col)
                 self.frontier_walls.add((wall_row, wall_col, new_row, new_col))
     
     def step_prims_algorithm(self):
-        """Execute one step of Prim's algorithm"""
+        """Execute a single step of Prim's Algorithm (for animation)."""
         if not self.frontier_walls:
             self.finish_generation()
             return
         
+        # Pick a random wall from the frontier
         wall_row, wall_col, neighbor_row, neighbor_col = random.choice(list(self.frontier_walls))
         self.current_cell = (wall_row, wall_col)
         
-        # Check if neighbor is still a wall (not connected to maze yet)
+        # Check if the neighbor is still a wall (unvisited)
         if self.grid[neighbor_row][neighbor_col] == CellType.WALL:
-            # Connect to maze
+            # Carve path through wall and to the neighbor
             self.grid[wall_row][wall_col] = CellType.PATH
             self.grid[neighbor_row][neighbor_col] = CellType.PATH
             
-            # Update frontier with new cell
+            # Add the new neighbor's walls to the frontier
             self.update_frontier(neighbor_row, neighbor_col)
         
-        # Remove this wall from frontier
+        # Remove this specific wall tuple from the set
         self.frontier_walls.discard((wall_row, wall_col, neighbor_row, neighbor_col))
         
         self.generation_steps += 1
         self.analyzer.increment_steps()
     
     def start_kruskals_algorithm(self):
-        """Initialize Kruskal's algorithm with proper union-find structure"""
-        # Initialize all potential maze cells as paths, but preserve START and END
+        """
+        Initialize randomized Kruskal's Algorithm.
+        
+        Algorithm Overview:
+        1. Treat each cell as a separate set.
+        2. Create a list of all walls between cells.
+        3. Randomly shuffle the wall list.
+        4. Iterate through the walls:
+           a. If the two cells separated by the wall belong to different sets:
+              i. Remove the wall (join them).
+              ii. Union the two sets.
+        """
+        # Step 1: Initialize all potential maze cells as paths (disjoint sets initially)
+        # We process strictly odd coordinates as "rooms"
         for row in range(1, self.grid_rows - 1, 2):
             for col in range(1, self.grid_size - 1, 2):
-                # Don't overwrite START and END positions
+                # Preserve START and END if they overlap (though they usually don't at initialization)
                 if (row, col) not in [self.start_pos, self.end_pos]:
                     self.grid[row][col] = CellType.PATH
         
-        # Initialize union-find structure
+        # Step 2: Initialize Union-Find (Disjoint Set) structure
         self.parent = {}
         self.rank = {}
         for row in range(1, self.grid_rows - 1, 2):
@@ -304,7 +465,7 @@ class MazeSimulation:
                 self.parent[cell] = cell
                 self.rank[cell] = 0
         
-        # Generate walls between adjacent cells
+        # Step 3: Collect all possible walls between adjacent "rooms"
         self.walls = []
         for row in range(1, self.grid_rows - 1, 2):
             for col in range(1, self.grid_size - 1, 2):
@@ -322,17 +483,24 @@ class MazeSimulation:
                     cell2 = (row + 2, col)
                     self.walls.append((wall_pos, cell1, cell2))
         
+        # Step 4: Randomize the wall processing order
         random.shuffle(self.walls)
         self.current_cell = None
     
     def find_set(self, cell: Tuple[int, int]) -> Tuple[int, int]:
-        """Find the representative of the set containing the cell (with path compression)"""
+        """
+        Find the representative root of the set containing 'cell'.
+        Uses Path Compression optimization for O(α(N)) amortized time.
+        """
         if self.parent[cell] != cell:
             self.parent[cell] = self.find_set(self.parent[cell])
         return self.parent[cell]
     
     def union_sets(self, cell1: Tuple[int, int], cell2: Tuple[int, int]) -> None:
-        """Union two sets using rank-based union (union by rank)"""
+        """
+        Merge two sets together.
+        Uses Union by Rank optimization to keep tree height small.
+        """
         root1 = self.find_set(cell1)
         root2 = self.find_set(cell2)
         
@@ -346,16 +514,16 @@ class MazeSimulation:
                 self.rank[root1] += 1
     
     def step_kruskals_algorithm(self):
-        """Execute one step of Kruskal's algorithm"""
+        """Execute a single step of Kruskal's Algorithm (for animation)."""
         if not self.walls:
             self.finish_generation()
             return
         
         wall_pos, cell1, cell2 = self.walls.pop()
         
-        # Check if cells are in different sets
+        # Check if cells are in different sets (not yet connected)
         if self.find_set(cell1) != self.find_set(cell2):
-            # Remove wall and union the sets
+            # Connect them by removing the wall
             self.grid[wall_pos[0]][wall_pos[1]] = CellType.PATH
             self.current_cell = wall_pos
             self.union_sets(cell1, cell2)
@@ -364,39 +532,59 @@ class MazeSimulation:
         self.analyzer.increment_steps()
     
     def finish_generation(self):
-        """Complete the maze generation"""
+        """
+        Finalize the maze generation phase.
+        
+        Ensures connectivity for Start/End points, captures the clean maze state
+        for future resets, calculates metrics, and prints a summary.
+        """
         self.is_generating = False
         self.generation_complete = True
         self.current_cell = None
         
-        # Ensure start and end are accessible by connecting them to the maze
+        # Critical Step: Ensure Start and End positions are actually accessible.
+        # Sometimes randomization might wall them off.
         self.ensure_start_end_connected()
         
-        # Save the original grid for solving
+        # Snapshot the generated maze so the "Reset" button works correctly
         self.original_grid = [[cell for cell in row] for row in self.grid]
         
+        # Stop performance tracking
         self.last_metrics = self.analyzer.stop_tracking()
-        print(f"Maze generation completed in {self.last_metrics['time_seconds']:.2f} seconds with {self.generation_steps} steps")
-        print(f"Peak Memory: {self.last_metrics['peak_memory_mb']:.2f} MB")
+        print(f"\nMaze generation completed using {self.generation_algorithm.value} in {self.last_metrics['time_seconds']:.2f} seconds ({self.generation_steps} steps)")
+        print(f"Peak Memory during generation: {self.last_metrics['peak_memory_mb']:.2f} MB")
     
     def ensure_start_end_connected(self):
-        """Ensure start and end positions are connected to the maze"""
+        """
+        Post-processing step to guarantee a solvable maze.
+        
+        Checks if the static START and END points are adjacent to any PATH cells.
+        If not, it finds the nearest path and drills a straight line connection.
+        """
         # Connect start position
         if self.grid[self.start_pos[0]][self.start_pos[1]] == CellType.START:
-            # Find nearest path cell and connect
+            # Find closest PATH cell
             nearest_path = self.find_nearest_path(self.start_pos)
             if nearest_path:
                 self.connect_positions(self.start_pos, nearest_path)
         
         # Connect end position
         if self.grid[self.end_pos[0]][self.end_pos[1]] == CellType.END:
-            # Find nearest path cell and connect
+            # Find closest PATH cell
             nearest_path = self.find_nearest_path(self.end_pos)
             if nearest_path:
                 self.connect_positions(self.end_pos, nearest_path)
     
     def find_nearest_path(self, pos: Tuple[int, int]) -> Optional[Tuple[int, int]]:
-        """Find the nearest path cell to a given position"""
+        """
+        Perform a BFS to find the closest reachable PATH cell from a given position.
+        
+        Args:
+            pos: (row, col) to search from.
+            
+        Returns:
+            (row, col) of the nearest PATH cell, or None if maze is full of walls.
+        """
         row, col = pos
         visited = set()
         queue = [(row, col)]
@@ -408,11 +596,11 @@ class MazeSimulation:
             
             visited.add((current_row, current_col))
             
-            # Check if this is a path cell
+            # Found a path cell!
             if self.grid[current_row][current_col] == CellType.PATH:
                 return (current_row, current_col)
             
-            # Add neighbors to queue
+            # Expand search outwards
             for dr, dc in [(0, 1), (1, 0), (0, -1), (-1, 0)]:
                 new_row, new_col = current_row + dr, current_col + dc
                 if (0 <= new_row < self.grid_rows and 0 <= new_col < self.grid_size and 
@@ -422,21 +610,23 @@ class MazeSimulation:
         return None
     
     def connect_positions(self, pos1: Tuple[int, int], pos2: Tuple[int, int]):
-        """Connect two positions by removing walls between them"""
+        """
+        Drill a straight path (L-shape) between two positions.
+        Used to forcibly connect Start/End to the main maze structure.
+        """
         row1, col1 = pos1
         row2, col2 = pos2
         
-        # Simple path: go horizontally then vertically
+        # Horizontal leg
         if col1 != col2:
-            # Horizontal connection
             start_col = min(col1, col2)
             end_col = max(col1, col2)
             for col in range(start_col, end_col + 1):
                 if self.grid[row1][col] == CellType.WALL:
                     self.grid[row1][col] = CellType.PATH
         
+        # Vertical leg
         if row1 != row2:
-            # Vertical connection
             start_row = min(row1, row2)
             end_row = max(row1, row2)
             for row in range(start_row, end_row + 1):
@@ -444,11 +634,16 @@ class MazeSimulation:
                     self.grid[row][col2] = CellType.PATH
     
     def start_solving(self):
-        """Start the maze solving process"""
+        """
+        Initiate the maze solving process using the selected algorithm.
+        
+        Resets previous solution data, restores the clean maze (removing visited/path artifacts),
+        and sets up the initial state for the chosen solver.
+        """
         if not self.generation_complete:
             return
         
-        # Reset solving state
+        # Reset solving flags and metrics
         self.is_solving = True
         self.solving_complete = False
         self.solving_steps = 0
@@ -456,7 +651,7 @@ class MazeSimulation:
         self.visited_cells = set()
         self.solution_path = []
         
-        # Restore original grid
+        # Restore original grid (clears previous solution/visited marks on the grid)
         self.grid = [[cell for cell in row] for row in self.original_grid]
         
         if self.solving_algorithm == SolvingAlgorithm.DFS:
@@ -467,31 +662,40 @@ class MazeSimulation:
             self.start_bfs()
     
     def start_dfs(self):
-        """Initialize DFS algorithm"""
+        """
+        Initialize Depth-First Search (DFS).
+        
+        Strategy:
+        Explore as deep as possible along each branch before backtracking.
+        - Stack-based approach (LIFO).
+        - Not guaranteed to find the shortest path.
+        """
+        # Stack stores: (current_position, path_taken_to_reach_it)
         self.solving_stack = [(self.start_pos, [self.start_pos])]
         self.visited_cells = {self.start_pos}
         self.current_cell = self.start_pos
     
     def step_dfs(self):
-        """Execute one step of DFS algorithm"""
+        """Execute one step of Depth-First Search."""
         if not self.solving_stack:
             self.finish_solving(False)
             return
         
+        # Pop the most recently added element (LIFO)
         (current_row, current_col), path = self.solving_stack.pop()
         self.current_cell = (current_row, current_col)
         
-        # Mark as visited
+        # Mark visual feedback
         if self.grid[current_row][current_col] not in [CellType.START, CellType.END]:
             self.grid[current_row][current_col] = CellType.VISITED
         
-        # Check if we reached the end
+        # Check success condition
         if (current_row, current_col) == self.end_pos:
             self.solution_path = path
             self.finish_solving(True)
             return
         
-        # Get neighbors
+        # Explore neighbors
         neighbors = self.get_path_neighbors(current_row, current_col)
         for neighbor_row, neighbor_col in neighbors:
             if (neighbor_row, neighbor_col) not in self.visited_cells:
@@ -503,43 +707,66 @@ class MazeSimulation:
         self.analyzer.increment_steps()
     
     def start_astar(self):
-        """Initialize A* algorithm"""
-        self.open_list = [(0, self.start_pos, [self.start_pos])]  # (f_score, position, path)
+        """
+        Initialize A* Search Algorithm.
+        
+        Strategy:
+        Best-first search using a heuristic cost function f(n) = g(n) + h(n).
+        - g(n): Actual cost from start to n.
+        - h(n): Estimated cost from n to end (Manhattan distance).
+        - Priority Queue based approach.
+        - Guarantees shortest path if heuristic is admissible.
+        """
+        # Priority Queue stores: (f_score, position, path)
+        self.open_list = [(0, self.start_pos, [self.start_pos])]
+        
+        # Cost from start to current node
         self.g_scores = {self.start_pos: 0}
+        
+        # Estimated total cost from start to goal through current node
         self.f_scores = {self.start_pos: self.heuristic(self.start_pos, self.end_pos)}
+        
         self.visited_cells = {self.start_pos}
         self.current_cell = self.start_pos
     
     def heuristic(self, pos1: Tuple[int, int], pos2: Tuple[int, int]) -> int:
-        """Calculate Manhattan distance heuristic"""
+        """
+        Calculate Manhattan distance (L1 norm) between two points.
+        Admissible heuristic for grid movement (no diagonals).
+        """
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
     
     def step_astar(self):
-        """Execute one step of A* algorithm"""
+        """Execute one step of A* Search."""
         if not self.open_list:
             self.finish_solving(False)
             return
         
+        # Pop node with lowest f_score
         f_score, (current_row, current_col), path = heapq.heappop(self.open_list)
         self.current_cell = (current_row, current_col)
         
-        # Mark as visited
+        # Mark visual feedback
         if self.grid[current_row][current_col] not in [CellType.START, CellType.END]:
             self.grid[current_row][current_col] = CellType.VISITED
         
-        # Check if we reached the end
+        # Check success condition
         if (current_row, current_col) == self.end_pos:
             self.solution_path = path
             self.finish_solving(True)
             return
         
-        # Get neighbors
+        # Explore neighbors
         neighbors = self.get_path_neighbors(current_row, current_col)
         for neighbor_row, neighbor_col in neighbors:
+            # We don't check 'visited' in the strict sense for A* because we might 
+            # find a better path to a visited node, but for this simple grid implementation
+            # without varying weights, 'visited' is sufficient optimization.
             if (neighbor_row, neighbor_col) not in self.visited_cells:
                 neighbor_pos = (neighbor_row, neighbor_col)
                 tentative_g_score = self.g_scores[(current_row, current_col)] + 1
                 
+                # If path is better (or new)
                 if tentative_g_score < self.g_scores.get(neighbor_pos, float('inf')):
                     self.g_scores[neighbor_pos] = tentative_g_score
                     f_score = tentative_g_score + self.heuristic(neighbor_pos, self.end_pos)
@@ -553,31 +780,43 @@ class MazeSimulation:
         self.analyzer.increment_steps()
     
     def start_bfs(self):
-        """Initialize BFS algorithm"""
+        """
+        Initialize Breadth-First Search (BFS).
+        
+        Strategy:
+        Explore all neighbors at the present depth prior to moving on to nodes at the next depth level.
+        - Queue-based approach (FIFO).
+        - Guarantees shortest path for unweighted graphs.
+        """
+        # Queue stores: (current_position, path_taken)
         self.solving_stack = [(self.start_pos, [self.start_pos])]
         self.visited_cells = {self.start_pos}
         self.current_cell = self.start_pos
     
     def step_bfs(self):
-        """Execute one step of BFS algorithm"""
+        """
+        Execute one step of Breadth-First Search.
+        Note: We reuse 'solving_stack' as a queue by popping from index 0.
+        """
         if not self.solving_stack:
             self.finish_solving(False)
             return
         
-        (current_row, current_col), path = self.solving_stack.pop(0)  # Use queue instead of stack
+        # Pop the oldest element (FIFO) - imitating a deque
+        (current_row, current_col), path = self.solving_stack.pop(0)
         self.current_cell = (current_row, current_col)
         
-        # Mark as visited
+        # Mark visual feedback
         if self.grid[current_row][current_col] not in [CellType.START, CellType.END]:
             self.grid[current_row][current_col] = CellType.VISITED
         
-        # Check if we reached the end
+        # Check success condition
         if (current_row, current_col) == self.end_pos:
             self.solution_path = path
             self.finish_solving(True)
             return
         
-        # Get neighbors
+        # Explore neighbors
         neighbors = self.get_path_neighbors(current_row, current_col)
         for neighbor_row, neighbor_col in neighbors:
             if (neighbor_row, neighbor_col) not in self.visited_cells:
@@ -589,71 +828,85 @@ class MazeSimulation:
         self.analyzer.increment_steps()
     
     def finish_solving(self, success: bool):
-        """Complete the maze solving"""
+        """
+        Finalize the solving phase.
+        
+        Args:
+            success: True if a path to the End node was found.
+        """
         self.is_solving = False
         self.solving_complete = True
         self.current_cell = None
         
         if success:
-            # Highlight solution path
+            # Highlight the optimal path
             for row, col in self.solution_path:
                 if self.grid[row][col] not in [CellType.START, CellType.END]:
                     self.grid[row][col] = CellType.SOLUTION
             
             self.last_metrics = self.analyzer.stop_tracking()
             
-            # Calculate optimality (simplified for now, assuming optimal is unknown unless we run BFS)
-            # In a real scenario we might run BFS in background to compare, or just show path length
+            # Simple metric: path length
             path_length = len(self.solution_path)
             self.last_metrics['path_length'] = path_length
             
-            print(f"Maze solved in {self.last_metrics['time_seconds']:.2f} seconds with {self.solving_steps} steps")
+            algo_name = "A* Search" if self.solving_algorithm == SolvingAlgorithm.ASTAR else "Depth-First Search (DFS)" if self.solving_algorithm == SolvingAlgorithm.DFS else "Breadth-First Search (BFS)"
+            print(f"\nMaze solved using {algo_name} in {self.last_metrics['time_seconds']:.2f} seconds ({self.solving_steps} steps explored)")
             print(f"Path Length: {path_length}")
-            print(f"Peak Memory: {self.last_metrics['peak_memory_mb']:.2f} MB")
+            print(f"Peak Memory during {algo_name.split()[0]} solve: {self.last_metrics['peak_memory_mb']:.2f} MB")
         else:
             self.last_metrics = self.analyzer.stop_tracking()
             print("No solution found!")
     
     def draw(self) -> None:
-        """Render the entire UI and maze grid to the screen."""
+        """
+        Render the entire Simulation State to the screen (per frame).
+        
+        Drawing Order:
+        1. Fill Background.
+        2. Draw Sidebar (Controls & Stats).
+        3. Draw Grid Cells (Maze).
+        4. Draw Highlights (Current Cell, etc.).
+        5. Draw Overlays (Results/Messages).
+        6. Flip Display Buffer.
+        """
         self.screen.fill((44, 47, 51))
         
-        # Draw sidebar
+        # --- Draw Sidebar ---
         sidebar_rect = pygame.Rect(0, 0, self.sidebar_width, self.window_height)
         pygame.draw.rect(self.screen, SIDEBAR_SHADOW, sidebar_rect.move(4, 4), border_radius=SIDEBAR_RADIUS)
         pygame.draw.rect(self.screen, SIDEBAR_BG, sidebar_rect, border_radius=SIDEBAR_RADIUS)
         self.draw_sidebar_content()
         
-        # Calculate grid area for responsive design
+        # --- Draw Maze Grid ---
         grid_area_width = self.window_width - self.sidebar_width
         grid_area_height = self.window_height
         
-        # Ensure minimum cell size for visibility
+        # Determine cell size dynamically based on available space
         min_cell_size = 3
         self.cell_size = max(min_cell_size, grid_area_width // self.grid_size)
         
-        # Recalculate grid rows based on available height
+        # Calculate how many rows fit on screen
         max_grid_rows = grid_area_height // self.cell_size
         actual_grid_rows = min(self.grid_rows, max_grid_rows)
         
-        # Draw maze grid with bounds checking
         for row in range(actual_grid_rows):
             for col in range(self.grid_size):
-                # Calculate cell position
+                # Calculate pixel coordinates
                 x = self.sidebar_width + col * self.cell_size
                 y = row * self.cell_size
                 
-                # Bounds checking
+                # Clip off-screen cells
                 if x >= self.window_width or y >= self.window_height:
                     continue
                 
-                # Get cell type with bounds checking
+                # Safely get cell type
                 if row < len(self.grid) and col < len(self.grid[row]):
                     cell_type = self.grid[row][col]
                 else:
                     cell_type = CellType.WALL
                 
-                # Determine cell color
+                # Select Color Mapping
                 color = WHITE
                 if cell_type == CellType.WALL:
                     color = BLACK
@@ -670,15 +923,15 @@ class MazeSimulation:
                 elif cell_type == CellType.CURRENT:
                     color = PURPLE
                 
-                # Draw cell
+                # Draw the cell
                 cell_rect = pygame.Rect(x, y, self.cell_size, self.cell_size)
                 pygame.draw.rect(self.screen, color, cell_rect)
                 
-                # Draw cell border (only if cell is large enough)
+                # Draw grid lines if cells are large enough to support it visually
                 if self.cell_size > 4:
                     pygame.draw.rect(self.screen, GRAY, cell_rect, 1)
         
-        # Draw current cell highlight
+        # --- Draw Current Agent Position Highlight ---
         if self.current_cell:
             row, col = self.current_cell
             if row < actual_grid_rows and col < self.grid_size:
@@ -688,13 +941,13 @@ class MazeSimulation:
                     highlight_rect = pygame.Rect(x, y, self.cell_size, self.cell_size)
                     pygame.draw.rect(self.screen, PURPLE, highlight_rect, 3)
         
-        # Overlay for no solution
+        # --- Draw Result Overlay ---
         if self.solving_complete and not self.solution_path:
             overlay = pygame.Surface((self.window_width, self.window_height), pygame.SRCALPHA)
-            overlay.fill((200, 40, 40, 120))
+            overlay.fill((200, 40, 40, 120))  # Semi-transparent red
             self.screen.blit(overlay, (0, 0))
             
-            # Center the message in the grid area
+            # Center the failure message
             msg = self.font_title.render("No Solution Found!", True, (255, 255, 255))
             msg_x = self.sidebar_width + (grid_area_width - msg.get_width()) // 2
             msg_y = (self.window_height - msg.get_height()) // 2
@@ -723,7 +976,10 @@ class MazeSimulation:
         
         # Show steps always
         extra_lines = []
-        if self.is_generating:
+        if self.is_paused:
+            status = "⏸️  PAUSED - Press 'P' to resume"
+            color = (255, 200, 0)
+        elif self.is_generating:
             status = f"Generating... Steps: {self.generation_steps}"
             color = ACTIVE_COLOR
         elif self.is_solving:
@@ -774,6 +1030,7 @@ class MazeSimulation:
             ("▶", "S - Solve Maze"),
             ("🔁", "R - Reset Simulation"),
             ("🟩", "G - Generate New Maze"),
+            ("⏸", "P - Pause / Resume Simulation"),
             ("1-3", "Change Generation Algorithm"),
             ("4-6", "Change Solving Algorithm")
         ]
@@ -999,7 +1256,12 @@ class MazeSimulation:
             y += 18
 
     def resize_grid(self) -> None:
-        """Resize the grid to match the new window dimensions and ensure only one end point exists."""
+        """
+        Handle window resize events by adjusting grid parameters.
+        
+        Note: This is a complex operation because the grid logical structure (CellType array)
+        needs to map to a new screen size. We prioritize keeping the Start/End points safe.
+        """
         # Calculate new grid dimensions
         grid_area_width = self.window_width - self.sidebar_width
         grid_area_height = self.window_height
@@ -1007,33 +1269,33 @@ class MazeSimulation:
         # Update cell size
         self.cell_size = max(3, grid_area_width // self.grid_size)
         
-        # Calculate new grid rows
+        # Calculate new grid rows based on new height
         new_grid_rows = max(1, grid_area_height // self.cell_size)
         
         # Create new grid with updated dimensions
         new_grid = [[CellType.WALL for _ in range(self.grid_size)] for _ in range(new_grid_rows)]
         
-        # Copy existing grid data if possible
+        # Copy existing grid data up to the new limits
         for row in range(min(self.grid_rows, new_grid_rows)):
             for col in range(min(len(self.grid[row]), self.grid_size)):
                 new_grid[row][col] = self.grid[row][col]
         
-        # Update grid and dimensions
+        # Commit updates
         self.grid = new_grid
         self.grid_rows = new_grid_rows
         
-        # Update end position
+        # Recalculate End position to fit on screen
         self.end_pos = (self.grid_rows - 2, self.grid_size - 2)
         if self.end_pos[0] < 1 or self.end_pos[1] < 1:
             self.end_pos = (1, 1)
         
-        # Clear all previous END cells
+        # Cleanup potential ghost End cells from crop
         for row in range(self.grid_rows):
-            for col in range(self.grid_size):
+             for col in range(self.grid_size):
                 if self.grid[row][col] == CellType.END:
                     self.grid[row][col] = CellType.WALL
         
-        # Ensure start and end positions are properly set
+        # Re-place Start and End points cleanly
         if 0 <= self.start_pos[0] < self.grid_rows and 0 <= self.start_pos[1] < self.grid_size:
             self.grid[self.start_pos[0]][self.start_pos[1]] = CellType.START
         else:
@@ -1047,35 +1309,48 @@ class MazeSimulation:
             self.grid[1][1] = CellType.END
 
     def handle_events(self) -> bool:
-        """Process user input and window events."""
+        """
+        Process the Pygame event queue.
+        
+        Handlers:
+        - QUIT: Close application.
+        - VIDEORESIZE: Adjust layout and fonts.
+        - KEYDOWN: Map keys to simulation actions (Generate, Solve, Pause, Algo switch).
+        
+        Returns:
+            bool: False if the game should exit, True otherwise.
+        """
         MIN_WIDTH, MIN_HEIGHT = 800, 600
         MAX_WIDTH, MAX_HEIGHT = 1920, 1200
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
             if event.type == pygame.VIDEORESIZE:
-                # Clamp window size to min/max
+                # Clamp window size limits
                 new_width = max(MIN_WIDTH, min(event.w, MAX_WIDTH))
                 new_height = max(MIN_HEIGHT, min(event.h, MAX_HEIGHT))
                 self.window_width, self.window_height = new_width, new_height
                 self.screen = pygame.display.set_mode((self.window_width, self.window_height), pygame.RESIZABLE)
                 
-                # Resize grid for responsive design
+                # Dynamic Layout Adjustment
                 self.resize_grid()
                 
-                # Recreate fonts for new window size
+                # Recreate fonts to scale
                 self.font_title = pygame.font.SysFont("Arial", min(28, self.window_height // 30), bold=True)
                 self.font_subtitle = pygame.font.SysFont("Arial", min(20, self.window_height // 40), bold=True)
                 self.font_body = pygame.font.SysFont("Arial", min(16, self.window_height // 50))
                 self.font_icon = pygame.font.SysFont("Arial", min(22, self.window_height // 36), bold=True)
                 
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_g:
+                if event.key == pygame.K_p:
+                    self.is_paused = not self.is_paused
+                elif event.key == pygame.K_g:
                     self.start_generation()
                 elif event.key == pygame.K_s and self.generation_complete:
                     self.start_solving()
                 elif event.key == pygame.K_r:
                     self.initialize_maze()
+                # Algorithm Selection Shortcuts
                 elif event.key == pygame.K_1:
                     self.generation_algorithm = GenerationAlgorithm.RECURSIVE_BACKTRACKING
                 elif event.key == pygame.K_2:
@@ -1091,7 +1366,15 @@ class MazeSimulation:
         return True
 
     def update(self):
-        """Update simulation state"""
+        """
+        Advance the simulation state by one tick.
+        
+        This method routes the update call to the currently active algorithm's
+        step function, unless the simulation is paused.
+        """
+        if self.is_paused:
+            return
+        
         if self.is_generating:
             if self.generation_algorithm == GenerationAlgorithm.RECURSIVE_BACKTRACKING:
                 self.step_recursive_backtracking()
@@ -1109,7 +1392,15 @@ class MazeSimulation:
                 self.step_bfs()
     
     def run(self) -> None:
-        """Main game loop."""
+        """
+        Execute the main application loop.
+        
+        Controls:
+        - Event Processing
+        - State Update
+        - Rendering
+        - Frame Rate Limiting
+        """
         running = True
         while running:
             running = self.handle_events()
@@ -1119,7 +1410,7 @@ class MazeSimulation:
         pygame.quit()
 
 def main() -> None:
-    """Main function to run the simulation."""
+    """Entry point for the application."""
     try:
         simulation = MazeSimulation()
         simulation.run()
