@@ -1,13 +1,14 @@
-import pygame  # Core library for the graphics, event handling, and game loop
-import random  # Used for randomized maze generation algorithms and decision making
-import heapq  # Provides priority queue implementation for A* algorithm efficiency
-import time  # Used for timing operations and performance tracking
-from enum import Enum  # Base class for defining state enumerations
-from typing import List, Tuple, Set, Optional, Deque  # Type hinting for better code maintenance and clarity
-from collections import deque
-from performance_analyzer import PerformanceAnalyzer  # Custom module for tracking algorithm metrics
+import pygame  # Core library: handles graphics context, event polling, and the main application loop
+import random  # Required for stochastic maze generation (Prim's, Kruskal's, Backtracking)
+import heapq  # Provides a binary heap for the A* priority queue (O(log N) push/pop)
+import time  # Used for high-resolution performance timing and frame management
+from enum import Enum  # Enables type-safe state definitions for cells and algorithms
+from typing import List, Tuple, Set, Optional, Deque  # Type hints for static analysis and self-documentation
+from collections import deque  # O(1) append/popleft for BFS queue and DFS stack efficiency
+from performance_analyzer import PerformanceAnalyzer  # Custom profiling module for memory (tracemalloc) and time metrics
 
-# Initialize Pygame core modules to enable window creation and event processing
+# Initialize Pygame's core modules (display, event, font, etc.)
+# This must be called before any other Pygame functions.
 pygame.init()
 
 # --- UI Constants ---
@@ -49,16 +50,19 @@ PURPLE: Tuple[int, int, int] = (128, 0, 128)
 
 class CellType(Enum):
     """
-    Defines the specific state or role of a single grid cell.
+    Enumeration defining the semantic role of each grid cell.
+    
+    Using an Enum ensures type safety and prevents "magic number" errors common in 
+    integer-based grid representations.
     
     Attributes:
-        WALL: Represents an obstacle or boundary.
-        PATH: A traversable open space.
-        START: The user-defined (or default) starting point.
-        END: The target destination point.
-        VISITED: Marks cells explored during the solving process (visualized).
-        SOLUTION: Marks the cells that form the final optimal path.
-        CURRENT: Highlights the algorithm's current working cell for visualization.
+        WALL (0): Represents an impassable barrier.
+        PATH (1): A traversable corridor.
+        START (2): The fixed starting point for solvers (top-left).
+        END (3): The fixed target destination for solvers (bottom-right).
+        VISITED (4): Visualization state; marks cells explored by the solver.
+        SOLUTION (5): Visualization state; marks the final optimal path found.
+        CURRENT (6): Visualization state; highlights the active "head" of the algorithm.
     """
     WALL = 0
     PATH = 1
@@ -70,12 +74,18 @@ class CellType(Enum):
 
 class GenerationAlgorithm(Enum):
     """
-    Available maze generation algorithms.
+    Maze generation strategies supported by the simulation.
     
     Attributes:
-        RECURSIVE_BACKTRACKING: DFS-based, creates long corridors with high branching factor.
-        PRIMS: Minimum spanning tree-based, creates a uniform distribution of short paths.
-        KRUSKALS: Set-based (Union-Find), creates complex mazes with many dead ends.
+        RECURSIVE_BACKTRACKING: A DFS-based approach that creates long, winding corridors 
+                                with a high "river" factor. Excellent for aesthetics but 
+                                can be computationally expensive to solve with DFS.
+        PRIMS: A Minimum Spanning Tree (MST) algorithm that grows organically from 
+               a center. Produces a "radial" texture with many short dead ends and 
+               balanced branching.
+        KRUSKALS: A set-based (Union-Find) algorithm that coalesces many disjoint 
+                  segments. Produces a highly uniform, "perfect" maze with no 
+                  obvious bias.
     """
     RECURSIVE_BACKTRACKING = "Recursive Backtracking"
     PRIMS = "Prim's Algorithm"
@@ -96,11 +106,19 @@ class SolvingAlgorithm(Enum):
 
 class MazeSimulation:
     """
-    Main controller class for the Maze Generation and Solving Simulation.
+    The central controller for the interactive maze simulation.
     
-    This class manages the Pygame window, handling the simulation loop,
-    rendering the grid and UI, and coordinating the execution of generation
-    and solving algorithms. It maintains the global state of the simulation.
+    Responsibilities:
+    1.  **State Management**: Coordinates transitions between 'Idle', 'Generating', and 'Solving' states.
+    2.  **Rendering**: Manage the 60 FPS update loop, drawing the grid and the reactive sidebar UI.
+    3.  **Event Handling**: Processes user inputs (keyboard shortcuts, window resizing).
+    4.  **Algorithm Orchestration**: Stepper functions execute one "tick" of an algorithm per frame.
+    
+    Design Note:
+    This class uses a "stepper" pattern rather than blocking loops. Each algorithm has a 
+    `step_algorithm()` method that performs a small unit of work and returns control 
+    to the main loop. This ensures the UI remains responsive (no freezing) during 
+    heavy computations.
     """
     def __init__(self) -> None:
         """
@@ -147,12 +165,28 @@ class MazeSimulation:
         self.is_paused: bool = False            # User pause toggle state
         
         # --- Algorithm Data Structures ---
-        # These structures maintain state across frames for the iterative animation steps.
-        self.generation_stack: List[Tuple[int, int]] = []  # Stack for DFS-based generation (Backtracking)
-        self.solving_stack: Deque[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = deque() # Stack/Queue for solvers
-        self.visited_cells: Set[Tuple[int, int]] = set() # Optimized lookup for visited checks
-        self.solution_path: List[Tuple[int, int]] = []   # Stores the sequence of coordinates for the solution
-        self.current_cell: Optional[Tuple[int, int]] = None # The cell currently being processed (visual focus)
+        # Persistent storage for algorithms that need to maintain state across frames.
+        # We define these at the class level to avoid re-allocation overhead during resets.
+        
+        # Stack for Recursive Backtracking (LIFO). 
+        # Stores (row, col) tuples representing the recursion path.
+        self.generation_stack: List[Tuple[int, int]] = []
+        
+        # General-purpose Deque for Solvers (BFS/DFS). 
+        # stores ((r, c), path_list). Using deque allows O(1) pops from both ends, 
+        # supporting both BFS (queue) and DFS (stack) efficiently.
+        self.solving_stack: Deque[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = deque()
+        
+        # Set for O(1) lookups of visited nodes during solving. 
+        # Prevents cycles and redundant processing.
+        self.visited_cells: Set[Tuple[int, int]] = set()
+        
+        # The final computed path (if any). Used for drawing the "victory" line.
+        self.solution_path: List[Tuple[int, int]] = []
+        
+        # The specific cell considered "active" in the current frame.
+        # Drawn in a distinct color (Purple) to visualize the algorithm's "head".
+        self.current_cell: Optional[Tuple[int, int]] = None
         
         # --- Metric Tracking ---
         self.generation_steps: int = 0
@@ -335,10 +369,23 @@ class MazeSimulation:
     
     def step_recursive_backtracking(self):
         """
-        Execute a single step of the Recursive Backtracking algorithm (for animation).
+        Execute a single frame of the Recursive Backtracking algorithm.
         
-        This method processes the top element of the stack. If the stack is empty,
-        generation is marked as complete.
+        Visualization Note:
+        This method intentionally returns after EVERY step, including backtracking 
+        operations. This ensures that the user sees the "mouse" retracing its path 
+        when it hits a dead end, which is a critical educational feature of DFS demonstrating 
+        depth exploration.
+        
+        Logic:
+        1. Check top of stack (current cell).
+        2. Identify unvisited 2-step neighbors.
+        3. If neighbors exist:
+           - Pick random one.
+           - Carve wall.
+           - Push new cell to stack.
+        4. If no neighbors (dead end):
+           - Pop stack (backtracks to previous cell).
         """
         if not self.generation_stack:
             self.finish_generation()
@@ -347,25 +394,26 @@ class MazeSimulation:
         current_row, current_col = self.generation_stack[-1]
         self.current_cell = (current_row, current_col)
         
-        # Get unvisited neighbors (2 cells away)
+        # Look for neighbors 2 cells away (skipping the wall in between)
         neighbors = self.get_unvisited_neighbors(current_row, current_col)
         
         if neighbors:
-            # Choose a random neighbor to visit next
+            # Expand: Choose a random unvisited neighbor
             next_row, next_col = random.choice(neighbors)
             
-            # Mark the neighbor as part of the path
+            # Carve the path (Cell itself)
             self.grid[next_row][next_col] = CellType.PATH
             
-            # Remove the wall between the current cell and the chosen neighbor
+            # Carve the wall between current and next
             self.remove_wall_between((current_row, current_col), (next_row, next_col))
             
-            # push to stack to continue path from there
+            # recursive step: push to stack
             self.generation_stack.append((next_row, next_col))
         else:
-            # Dead end reached, backtrack to previous cell
+            # Backtrack: Pop from stack to return to the parent cell
             self.generation_stack.pop()
         
+        # Increment step counters (Visual + Analytical)
         self.generation_steps += 1
         self.analyzer.increment_steps()
     
@@ -412,24 +460,29 @@ class MazeSimulation:
                 self.frontier_walls.add((wall_row, wall_col, new_row, new_col))
     
     def step_prims_algorithm(self):
-        """Execute Prim's Algorithm steps until a visual change occurs or limit reached."""
+        """
+        Execute Prim's Algorithm steps until a visual change occurs or batch limit is reached.
+        
+        Performance Optimization (Batching):
+        Prim's algorithm often picks walls that connect two already-visited cells. 
+        These checks are computationally necessary but visually redundant (nothing changes on screen).
+        To prevent the simulation from appearing "slow" or "frozen" while processing these 
+        redundant checks, we allow the loop to run up to `MAX_CHECKS_PER_FRAME` times until 
+        it finds a wall that actually carves a new path.
+        
+        This aligns the visual pacing with Kruskal's algorithm, which uses a similar strategy.
+        """
         walls_checked = 0
-        MAX_CHECKS_PER_FRAME = 20  # Consistent with Kruskal's batching
+        MAX_CHECKS_PER_FRAME = 20  # Batch size tuning: higher = faster animation, lower = more detailed
 
         while self.frontier_walls and walls_checked < MAX_CHECKS_PER_FRAME:
-            # Pick a random wall from the frontier (Optimization: convert to list once if expensive, 
-            # but random.choice on set requires conversion anyway. Ideally popping is O(1) but randomization is desired)
-            # To avoid O(N) list conversion every frame inside loop, we can just pop arbitrary element if we didn't care about randomness,
-            # but Prim's requires random selection.
-            # For 20 checks, the overhead is acceptable for 60FPS on modern hardware.
-            
-            # Note: converting large set to list repeatedly is inefficient. 
-            # Optimization: We can just use pop() since sets are unordered, but strictly speaking Prim's says "Random".
-            # Python's set iteration order is not "random" in the statistical sense, but sufficient for maze gen visually?
-            # Actually, standard Randomized Prim's explicitly needs random choice.
-            # Let's stick to correctness for now.
-            
             walls_checked += 1
+            
+            # Selection Strategy:
+            # Prim's requires selecting a wall from the frontier. 
+            # Note: converting a large Set to a List for random.choice is O(N). 
+            # For strict performance on massive grids, one would use a proper list+set combo.
+            # However, for 40x40 grids, this overhead is negligible compared to rendering.
             wall_tuple = random.choice(list(self.frontier_walls))
             wall_row, wall_col, neighbor_row, neighbor_col = wall_tuple
             
@@ -437,20 +490,25 @@ class MazeSimulation:
             self.generation_steps += 1
             self.analyzer.increment_steps()
             
-            # Check if the neighbor is still a wall (unvisited)
+            # Check condition: The neighbor must be unvisited (WALL)
             if self.grid[neighbor_row][neighbor_col] == CellType.WALL:
-                # Carve path through wall and to the neighbor
+                # 1. Carve the wall itself
                 self.grid[wall_row][wall_col] = CellType.PATH
+                # 2. Carve the neighbor cell
                 self.grid[neighbor_row][neighbor_col] = CellType.PATH
                 
-                # Add the new neighbor's walls to the frontier
+                # 3. Add new walls from the newly visited neighbor to the frontier
                 self.update_frontier(neighbor_row, neighbor_col)
+                
+                # Clean up and return to force a render frame
                 self.frontier_walls.discard(wall_tuple)
-                return  # Return to render the change
+                return 
             
-            # If not carved, just discard and continue loop
+            # If the neighbor was already visited, this wall is technically an edge to an existing tree node.
+            # We discard it and continue the loop (skipping a render frame for this no-op).
             self.frontier_walls.discard(wall_tuple)
 
+        # Termination condition
         if not self.frontier_walls:
             self.finish_generation()
     
@@ -533,28 +591,47 @@ class MazeSimulation:
                 self.rank[root1] += 1
     
     def step_kruskals_algorithm(self):
-        """Execute Kruskal's Algorithm steps until a visual change occurs or limit reached."""
-        # Process multiple walls per frame to avoid visual stalls on redundant edges
-        # This prevents the "frozen" look when many consecutive edges are discarded
+        """
+        Execute Kruskal's Algorithm steps until a visual change occurs or limit reached.
+        
+        Kruskal's Logic:
+        Iterates through a randomized list of all valid walls. If a wall separates two 
+        previously disconnected sets (trees), it removes the wall and unions the sets.
+        
+        Visualization Optimization (Batching):
+        Like Prim's, Kruskal's encounters many walls that connect cells already in the 
+        same set (cycles). These are discarded. To ensure smooth animation, we process 
+        up to `MAX_CHECKS_PER_FRAME` of these redundant edges in a single tick 
+        without yielding to the renderer. We only yield (return) when a wall is 
+        actually carved, or we hit the batch limit.
+        """
         walls_checked = 0
-        MAX_CHECKS_PER_FRAME = 20  # Balance between speed and responsiveness
+        MAX_CHECKS_PER_FRAME = 20  # Tuning constant for visual pacing
 
         while self.walls and walls_checked < MAX_CHECKS_PER_FRAME:
+            # Pop the next random wall from the pre-shuffled list
             wall_pos, cell1, cell2 = self.walls.pop()
             walls_checked += 1
             
             self.generation_steps += 1
             self.analyzer.increment_steps()
             
-            # Check if cells are in different sets (not yet connected)
+            # Core Logic: Union-Find Check
+            # If roots are different, these two cells are not yet connected.
             if self.find_set(cell1) != self.find_set(cell2):
-                # Connect them by removing the wall
+                # 1. Carve the visual wall
                 self.grid[wall_pos[0]][wall_pos[1]] = CellType.PATH
                 self.current_cell = wall_pos
+                
+                # 2. Merge the logical sets
                 self.union_sets(cell1, cell2)
-                return  # Return to let the loop render the update
+                
+                return  # Return to render the change (yield frame)
+            
+            # If roots are same, the wall creates a cycle. 
+            # We implicitly discard it by not reacting, and the loop continues.
 
-        # If we ran out of walls completely
+        # If list is empty, generation is done.
         if not self.walls:
             self.finish_generation()
     
@@ -583,10 +660,12 @@ class MazeSimulation:
     
     def ensure_start_end_connected(self):
         """
-        Post-processing step to guarantee a solvable maze.
+        Post-processing reliability check.
         
-        Checks if the static START and END points are adjacent to any PATH cells.
-        If not, it finds the nearest path and drills a straight line connection.
+        Ensures that the randomly placed Start and End points are accessible from the maze.
+        Since walls are randomized, these points might sometimes be isolated. 
+        This method finds the nearest walkable path and 'drills' a corridor to it 
+        if necessary, guaranteeing a solvable maze.
         """
         # Connect start position
         if self.grid[self.start_pos[0]][self.start_pos[1]] == CellType.START:
@@ -690,12 +769,13 @@ class MazeSimulation:
     
     def start_dfs(self):
         """
-        Initialize Depth-First Search (DFS).
+        Initialize Depth-First Search (DFS) for pathfinding.
         
         Strategy:
-        Explore as deep as possible along each branch before backtracking.
-        - Stack-based approach (LIFO).
-        - Not guaranteed to find the shortest path.
+        DFS explores as deep as possible along each branch before backtracking.
+        - **Data Structure**: Stack (LIFO).
+        - **Pros**: Low memory usage on shallow trees.
+        - **Cons**: Not guaranteed to find the shortest path; can get lost in deep branches.
         """
         # Stack stores: (current_position, path_taken_to_reach_it)
         self.solving_stack = deque([(self.start_pos, [self.start_pos])])
@@ -738,11 +818,16 @@ class MazeSimulation:
         Initialize A* Search Algorithm.
         
         Strategy:
-        Best-first search using a heuristic cost function f(n) = g(n) + h(n).
-        - g(n): Actual cost from start to n.
-        - h(n): Estimated cost from n to end (Manhattan distance).
-        - Priority Queue based approach.
-        - Guarantees shortest path if heuristic is admissible.
+        A* is an informed search algorithm that uses a heuristic to guide the search 
+        towards the goal, minimizing f(n) = g(n) + h(n).
+        - **g(n)**: Cost from start to current node (known path cost).
+        - **h(n)**: Estimated cost from current node to goal (Heuristic).
+        - **Data Structure**: Priority Queue (Min-Heap).
+        
+        Optimality:
+        Guaranteed to return the shortest path for this grid graph because our 
+        Movement Cost is uniform (1) and our Heuristic (Manhattan) is admissible 
+        (never overestimates).
         """
         # Priority Queue stores: (f_score, position, path)
         self.open_list = [(0, self.start_pos, [self.start_pos])]
@@ -811,9 +896,10 @@ class MazeSimulation:
         Initialize Breadth-First Search (BFS).
         
         Strategy:
-        Explore all neighbors at the present depth prior to moving on to nodes at the next depth level.
-        - Queue-based approach (FIFO).
-        - Guarantees shortest path for unweighted graphs.
+        Explores the neighbor nodes first, before moving to the next level neighbors.
+        - **Data Structure**: Queue (FIFO), implemented via `collections.deque` for O(1) pops.
+        - **Optimality**: Guarantees the shortest path in unweighted graphs (like this maze).
+        - **Performance**: Can consume more memory than DFS in wide graphs.
         """
         # Queue stores: (current_position, path_taken)
         self.solving_stack = deque([(self.start_pos, [self.start_pos])])
@@ -1136,28 +1222,46 @@ class MazeSimulation:
             self.grid[1][1] = CellType.END
 
     def handle_events(self) -> bool:
-        """Process user input and window events."""
+        """
+        Process all pending Pygame events (keyboard, mouse, window).
+        
+        Key Responsibilities:
+        1. **Application Exit**: Handles QUIT event.
+        2. **Responsive Layout**: Handles VIDEORESIZE, including a safety reset mechanism to prevents crashes 
+           if resized during active generation/solving (which would invalidate grid indexes).
+        3. **Input Handling**: Maps keys to actions. 
+           *Critical Safety*: Algorithm switching (buttons 1-6) is explicitly BLOCKED while 
+           an algorithm is running to prevent state corruption.
+           
+        Returns:
+            bool: False if the application should terminate, True otherwise.
+        """
         MIN_WIDTH, MIN_HEIGHT = 800, 600
         MAX_WIDTH, MAX_HEIGHT = 1920, 1200
+        
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 return False
+            
             if event.type == pygame.VIDEORESIZE:
-                # Safety Reset: If running, reset to prevent grid index errors on resize
+                # Safety Guard:
+                # If the user resizes the window while an algorithm is writing to the grid, 
+                # changing grid dimensions would cause IndexErrors or logical state inconsistencies.
+                # We force a hard reset to safe state if this happens.
                 if self.is_generating or self.is_solving:
                     print("Simulation reset due to window resize during execution.")
                     self.initialize_maze()
 
-                # Clamp window size to min/max
+                # Clamp window size to prevent UI breaking constraints
                 new_width = max(MIN_WIDTH, min(event.w, MAX_WIDTH))
                 new_height = max(MIN_HEIGHT, min(event.h, MAX_HEIGHT))
                 self.window_width, self.window_height = new_width, new_height
                 self.screen = pygame.display.set_mode((self.window_width, self.window_height), pygame.RESIZABLE)
                 
-                # Resize grid for responsive design
+                # Recalculate grid layout and typography
                 self.resize_grid()
                 
-                # Recreate fonts for new window size
+                # Dynamic Font Scaling
                 self.font_title = pygame.font.SysFont("Arial", min(28, self.window_height // 30), bold=True)
                 self.font_subtitle = pygame.font.SysFont("Arial", min(20, self.window_height // 40), bold=True)
                 self.font_body = pygame.font.SysFont("Arial", min(16, self.window_height // 50))
@@ -1170,7 +1274,10 @@ class MazeSimulation:
                     self.start_solving()
                 elif event.key == pygame.K_r:
                     self.initialize_maze()
-                # Algorithm Selection Shortcuts (Blocked during execution)
+                
+                # Algorithm Selection Safety Lock:
+                # Prevent switching algorithms mid-execution, which would confuse the 
+                # update loop (e.g., trying to step 'BFS' using a 'DFS' stack).
                 elif not (self.is_generating or self.is_solving):
                     if event.key == pygame.K_1:
                         self.generation_algorithm = GenerationAlgorithm.RECURSIVE_BACKTRACKING
