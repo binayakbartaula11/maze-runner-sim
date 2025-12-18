@@ -3,7 +3,8 @@ import random  # Used for randomized maze generation algorithms and decision mak
 import heapq  # Provides priority queue implementation for A* algorithm efficiency
 import time  # Used for timing operations and performance tracking
 from enum import Enum  # Base class for defining state enumerations
-from typing import List, Tuple, Set, Optional  # Type hinting for better code maintenance and clarity
+from typing import List, Tuple, Set, Optional, Deque  # Type hinting for better code maintenance and clarity
+from collections import deque
 from performance_analyzer import PerformanceAnalyzer  # Custom module for tracking algorithm metrics
 
 # Initialize Pygame core modules to enable window creation and event processing
@@ -148,7 +149,7 @@ class MazeSimulation:
         # --- Algorithm Data Structures ---
         # These structures maintain state across frames for the iterative animation steps.
         self.generation_stack: List[Tuple[int, int]] = []  # Stack for DFS-based generation (Backtracking)
-        self.solving_stack: List[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = [] # Stack/Queue for solvers
+        self.solving_stack: Deque[Tuple[Tuple[int, int], List[Tuple[int, int]]]] = deque() # Stack/Queue for solvers
         self.visited_cells: Set[Tuple[int, int]] = set() # Optimized lookup for visited checks
         self.solution_path: List[Tuple[int, int]] = []   # Stores the sequence of coordinates for the solution
         self.current_cell: Optional[Tuple[int, int]] = None # The cell currently being processed (visual focus)
@@ -186,7 +187,7 @@ class MazeSimulation:
         self.generation_complete = False
         self.solving_complete = False
         self.generation_stack = []
-        self.solving_stack = []
+        self.solving_stack = deque()
         self.visited_cells = set()
         self.solution_path = []
         self.current_cell = None
@@ -411,29 +412,47 @@ class MazeSimulation:
                 self.frontier_walls.add((wall_row, wall_col, new_row, new_col))
     
     def step_prims_algorithm(self):
-        """Execute a single step of Prim's Algorithm (for animation)."""
+        """Execute Prim's Algorithm steps until a visual change occurs or limit reached."""
+        walls_checked = 0
+        MAX_CHECKS_PER_FRAME = 20  # Consistent with Kruskal's batching
+
+        while self.frontier_walls and walls_checked < MAX_CHECKS_PER_FRAME:
+            # Pick a random wall from the frontier (Optimization: convert to list once if expensive, 
+            # but random.choice on set requires conversion anyway. Ideally popping is O(1) but randomization is desired)
+            # To avoid O(N) list conversion every frame inside loop, we can just pop arbitrary element if we didn't care about randomness,
+            # but Prim's requires random selection.
+            # For 20 checks, the overhead is acceptable for 60FPS on modern hardware.
+            
+            # Note: converting large set to list repeatedly is inefficient. 
+            # Optimization: We can just use pop() since sets are unordered, but strictly speaking Prim's says "Random".
+            # Python's set iteration order is not "random" in the statistical sense, but sufficient for maze gen visually?
+            # Actually, standard Randomized Prim's explicitly needs random choice.
+            # Let's stick to correctness for now.
+            
+            walls_checked += 1
+            wall_tuple = random.choice(list(self.frontier_walls))
+            wall_row, wall_col, neighbor_row, neighbor_col = wall_tuple
+            
+            self.current_cell = (wall_row, wall_col)
+            self.generation_steps += 1
+            self.analyzer.increment_steps()
+            
+            # Check if the neighbor is still a wall (unvisited)
+            if self.grid[neighbor_row][neighbor_col] == CellType.WALL:
+                # Carve path through wall and to the neighbor
+                self.grid[wall_row][wall_col] = CellType.PATH
+                self.grid[neighbor_row][neighbor_col] = CellType.PATH
+                
+                # Add the new neighbor's walls to the frontier
+                self.update_frontier(neighbor_row, neighbor_col)
+                self.frontier_walls.discard(wall_tuple)
+                return  # Return to render the change
+            
+            # If not carved, just discard and continue loop
+            self.frontier_walls.discard(wall_tuple)
+
         if not self.frontier_walls:
             self.finish_generation()
-            return
-        
-        # Pick a random wall from the frontier
-        wall_row, wall_col, neighbor_row, neighbor_col = random.choice(list(self.frontier_walls))
-        self.current_cell = (wall_row, wall_col)
-        
-        # Check if the neighbor is still a wall (unvisited)
-        if self.grid[neighbor_row][neighbor_col] == CellType.WALL:
-            # Carve path through wall and to the neighbor
-            self.grid[wall_row][wall_col] = CellType.PATH
-            self.grid[neighbor_row][neighbor_col] = CellType.PATH
-            
-            # Add the new neighbor's walls to the frontier
-            self.update_frontier(neighbor_row, neighbor_col)
-        
-        # Remove this specific wall tuple from the set
-        self.frontier_walls.discard((wall_row, wall_col, neighbor_row, neighbor_col))
-        
-        self.generation_steps += 1
-        self.analyzer.increment_steps()
     
     def start_kruskals_algorithm(self):
         """
@@ -514,22 +533,30 @@ class MazeSimulation:
                 self.rank[root1] += 1
     
     def step_kruskals_algorithm(self):
-        """Execute a single step of Kruskal's Algorithm (for animation)."""
+        """Execute Kruskal's Algorithm steps until a visual change occurs or limit reached."""
+        # Process multiple walls per frame to avoid visual stalls on redundant edges
+        # This prevents the "frozen" look when many consecutive edges are discarded
+        walls_checked = 0
+        MAX_CHECKS_PER_FRAME = 20  # Balance between speed and responsiveness
+
+        while self.walls and walls_checked < MAX_CHECKS_PER_FRAME:
+            wall_pos, cell1, cell2 = self.walls.pop()
+            walls_checked += 1
+            
+            self.generation_steps += 1
+            self.analyzer.increment_steps()
+            
+            # Check if cells are in different sets (not yet connected)
+            if self.find_set(cell1) != self.find_set(cell2):
+                # Connect them by removing the wall
+                self.grid[wall_pos[0]][wall_pos[1]] = CellType.PATH
+                self.current_cell = wall_pos
+                self.union_sets(cell1, cell2)
+                return  # Return to let the loop render the update
+
+        # If we ran out of walls completely
         if not self.walls:
             self.finish_generation()
-            return
-        
-        wall_pos, cell1, cell2 = self.walls.pop()
-        
-        # Check if cells are in different sets (not yet connected)
-        if self.find_set(cell1) != self.find_set(cell2):
-            # Connect them by removing the wall
-            self.grid[wall_pos[0]][wall_pos[1]] = CellType.PATH
-            self.current_cell = wall_pos
-            self.union_sets(cell1, cell2)
-        
-        self.generation_steps += 1
-        self.analyzer.increment_steps()
     
     def finish_generation(self):
         """
@@ -671,7 +698,7 @@ class MazeSimulation:
         - Not guaranteed to find the shortest path.
         """
         # Stack stores: (current_position, path_taken_to_reach_it)
-        self.solving_stack = [(self.start_pos, [self.start_pos])]
+        self.solving_stack = deque([(self.start_pos, [self.start_pos])])
         self.visited_cells = {self.start_pos}
         self.current_cell = self.start_pos
     
@@ -789,7 +816,7 @@ class MazeSimulation:
         - Guarantees shortest path for unweighted graphs.
         """
         # Queue stores: (current_position, path_taken)
-        self.solving_stack = [(self.start_pos, [self.start_pos])]
+        self.solving_stack = deque([(self.start_pos, [self.start_pos])])
         self.visited_cells = {self.start_pos}
         self.current_cell = self.start_pos
     
@@ -803,7 +830,7 @@ class MazeSimulation:
             return
         
         # Pop the oldest element (FIFO) - imitating a deque
-        (current_row, current_col), path = self.solving_stack.pop(0)
+        (current_row, current_col), path = self.solving_stack.popleft()
         self.current_cell = (current_row, current_col)
         
         # Mark visual feedback
@@ -1116,6 +1143,11 @@ class MazeSimulation:
             if event.type == pygame.QUIT:
                 return False
             if event.type == pygame.VIDEORESIZE:
+                # Safety Reset: If running, reset to prevent grid index errors on resize
+                if self.is_generating or self.is_solving:
+                    print("Simulation reset due to window resize during execution.")
+                    self.initialize_maze()
+
                 # Clamp window size to min/max
                 new_width = max(MIN_WIDTH, min(event.w, MAX_WIDTH))
                 new_height = max(MIN_HEIGHT, min(event.h, MAX_HEIGHT))
@@ -1138,18 +1170,20 @@ class MazeSimulation:
                     self.start_solving()
                 elif event.key == pygame.K_r:
                     self.initialize_maze()
-                elif event.key == pygame.K_1:
-                    self.generation_algorithm = GenerationAlgorithm.RECURSIVE_BACKTRACKING
-                elif event.key == pygame.K_2:
-                    self.generation_algorithm = GenerationAlgorithm.PRIMS
-                elif event.key == pygame.K_3:
-                    self.generation_algorithm = GenerationAlgorithm.KRUSKALS
-                elif event.key == pygame.K_4:
-                    self.solving_algorithm = SolvingAlgorithm.DFS
-                elif event.key == pygame.K_5:
-                    self.solving_algorithm = SolvingAlgorithm.ASTAR
-                elif event.key == pygame.K_6:
-                    self.solving_algorithm = SolvingAlgorithm.BFS
+                # Algorithm Selection Shortcuts (Blocked during execution)
+                elif not (self.is_generating or self.is_solving):
+                    if event.key == pygame.K_1:
+                        self.generation_algorithm = GenerationAlgorithm.RECURSIVE_BACKTRACKING
+                    elif event.key == pygame.K_2:
+                        self.generation_algorithm = GenerationAlgorithm.PRIMS
+                    elif event.key == pygame.K_3:
+                        self.generation_algorithm = GenerationAlgorithm.KRUSKALS
+                    elif event.key == pygame.K_4:
+                        self.solving_algorithm = SolvingAlgorithm.DFS
+                    elif event.key == pygame.K_5:
+                        self.solving_algorithm = SolvingAlgorithm.ASTAR
+                    elif event.key == pygame.K_6:
+                        self.solving_algorithm = SolvingAlgorithm.BFS
         return True
 
     def update(self):
